@@ -1,0 +1,8 @@
+README.md
+setup.cfg
+setup.py
+turbosensei/__init__.py
+turbosensei.egg-info/PKG-INFO
+turbosensei.egg-info/SOURCES.txt
+turbosensei.egg-info/dependency_links.txt
+turbosensei.egg-info/top_level.txt
