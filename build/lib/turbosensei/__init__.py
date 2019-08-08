@@ -5,6 +5,7 @@ import os
 import numpy as np
 import codecs as cd
 import scipy as sp
+import scipy.stats as sps
 from scipy import linalg
 import ipywidgets as widgets
 from ipywidgets import interact, interactive, fixed, Layout, VBox, HBox
@@ -14,7 +15,7 @@ import matplotlib.tri as tri
 import matplotlib.colors as colors
 from matplotlib.colors import LinearSegmentedColormap
 from dask.distributed import Client, LocalCluster, progress #needed for multiprocessing
-from scipy.special import gammaln
+from scipy.special import gammaln, logsumexp
 
 ##### BEGIN SECTION: FILE SELECTION #################################################
 class FileBrowser(object):
@@ -100,6 +101,8 @@ def preprocessing_options(X):
     slope_title = widgets.HTML(value='To disable high-field slope correction use a value of 100%')
     slope_widge1 = HBox([slope_widge,slope_title])
 
+    #process_button = widgets.Button(description="Preprocess Data")
+    #process_button.on_click(process_button_clicked)
     
     drift_widge = widgets.Checkbox(value=False, description='Measurement drift correction')
     fpa_widge = widgets.Checkbox(value=False, description='Remove first point artifact')
@@ -123,21 +126,23 @@ def preprocessing_options(X):
     
     return X
 
+
 def plot_delta_hysteresis(X,ax):
 
     #unpack 
     M = X["DM"]
     H = X["H"]
     Fk = X["Fk"]
+    Fj = X["Fj"]
 
     hfont = {'fontname':'STIXGeneral'}
 
     for i in range(5,int(np.max(Fk)),5):
     
         if X["mass"].value > 0.0: #SI and mass normalized (T and Am2/kg)
-            ax.plot(H[Fk==i],M[Fk==i]/(X["mass"].value/1000.0),'-k')        
+            ax.plot(H[(Fk==i) & (Fj>0)],M[(Fk==i) & (Fj>0)]/(X["mass"].value/1000.0),'-k')        
         else: #SI not mass normalized (T and Am2)
-            ax.plot(H[Fk==i],M[Fk==i],'-k') 
+            ax.plot(H[(Fk==i) & (Fj>0)],M[(Fk==i) & (Fj>0)],'-k') 
       
     ax.grid(False)
     ax.minorticks_on()
@@ -224,7 +229,11 @@ def data_preprocessing(X):
     #if X["outlier"].value == True:
     #    data = remove_outliers(data)
   
-    X["lbs"] = lowerbranch_subtract(X)
+    #extend FORCs
+    X = FORC_extend(X)
+
+    #perform lower branch subtraction
+    X = lowerbranch_subtract(X)
     
     fig = plt.figure(figsize=(12,8))
     ax1 = fig.add_subplot(121)
@@ -244,6 +253,7 @@ def plot_hysteresis(X,ax):
     M = X["M"]
     H = X["H"]
     Fk = X["Fk"]
+    Fj = X["Fj"]
 
     #mpl.style.use('seaborn-whitegrid')
     hfont = {'fontname':'STIXGeneral'}
@@ -251,9 +261,9 @@ def plot_hysteresis(X,ax):
     for i in range(5,int(np.max(Fk)),5):
     
         if X["mass"].value > 0.0: #SI and mass normalized (T and Am2/kg)
-            ax.plot(H[Fk==i],M[Fk==i]/(X["mass"].value/1000.0),'-k')        
+            ax.plot(H[(Fk==i) & (Fj>0)],M[(Fk==i) & (Fj>0)]/(X["mass"].value/1000.0),'-k')        
         else: #SI not mass normalized (T and Am2)
-            ax.plot(H[Fk==i],M[Fk==i],'-k')        
+            ax.plot(H[(Fk==i) & (Fj>0)],M[(Fk==i) & (Fj>0)],'-k')        
 
     ax.grid(False)
     ax.minorticks_on()
@@ -426,7 +436,6 @@ def remove_lpa(X):
     Hr = X["Hr"]
     M = X["M"]
     Fk = X["Fk"]
-    Fj = X["Fj"]
     Ft = X["Ft"]
     
     #remove last point artifact
@@ -453,7 +462,6 @@ def remove_lpa(X):
     X["Hr"] = Hr
     X["M"] = M
     X["Fk"] = Fk
-    X["Fj"] = Fj
     X["Ft"] = Ft        
     
     return X
@@ -486,7 +494,6 @@ def remove_fpa(X):
     X["Hr"] = Hr
     X["M"] = M
     X["Fk"] = Fk
-    X["Fj"] = Fj
     X["Ft"] = Ft        
     
     return X
@@ -514,7 +521,126 @@ def CGS2SI(X):
       
     return X
 
+def FORC_extend(X):
+    
+    Ne = 20 #extend up to 20 measurement points backwards
+    
+    #unpack
+    H = X["H"]    
+    Hr = X["Hr"]
+    M = X["M"]
+    Fk = X["Fk"]
+    Fj = X["Fj"]
+    dH = X["dH"]
+    
+    for i in range(int(X['Fk'][-1])):
+        M0 = M[Fk==i+1]
+        H0 = H[Fk==i+1]
+        Hr0 = Hr[Fk==i+1][0]
+        
+        M1 = M0[0] - (np.flip(M0)[1:]-M0[0])
+        H1 = H0[0] - (np.flip(H0)[1:]-H0[0])
+            
+        if M1.size>Ne:
+            H1 = H1[-Ne-1:-1]
+            M1 = M1[-Ne-1:-1]
+        
+        if i==0:    
+            N_new = np.concatenate((M1,M0)).size
+            H_new = np.concatenate((H1,H0))
+            M_new = np.concatenate((M1,M0))
+            Hr_new = np.ones(N_new)*Hr0
+            Fk_new = np.ones(N_new)
+            Fj_new = np.arange(N_new)+1-M1.size
+        else:
+            N_new = np.concatenate((M1,M0)).size
+            H_new = np.concatenate((H_new,H1,H0))
+            M_new = np.concatenate((M_new,M1,M0))
+            Hr_new = np.concatenate((Hr_new,np.ones(N_new)*Hr0))
+            Fk_new = np.concatenate((Fk_new,np.ones(N_new)+i))
+            Fj_new = np.concatenate((Fj_new,np.arange(N_new)+1-M1.size))
+            
+    #pack up variables
+    X['H'] = H_new
+    X['Hr'] = Hr_new
+    X['M'] = M_new
+    X['Fk'] = Fk_new
+    X['Fj'] = Fj_new
+    
+    return X
+
 def lowerbranch_subtract(X):
+    """Function to subtract lower hysteresis branch from FORC magnetizations
+    
+    Inputs:
+    H: Measurement applied field [float, SI units]
+    Hr: Reversal field [float, SI units]
+    M: Measured magnetization [float, SI units]
+    Fk: Index of measured FORC (int)
+    Fj: Index of given measurement within a given FORC (int)
+    
+    Outputs:
+    M: lower branch subtracted magnetization [float, SI units]
+   
+    
+    """
+    
+    #unpack
+    H = X["H"]    
+    Hr = X["Hr"]
+    M = X["M"]
+    Fk = X["Fk"]
+    Fj = X["Fj"]
+    dH = X["dH"]
+    
+    Hmin = np.min(H)
+    Hmax = np.max(H)
+
+
+    Nbar = 10
+    nH = int((Hmax - Hmin)/dH)
+    Hi = np.linspace(Hmin,Hmax,nH*50+1)
+    Mi = np.empty(Hi.size)
+    
+    #perform basic loess
+    for i in range(Hi.size):
+        idx = (H>=Hi[i]-2.5*dH) & (H<=Hi[i]+2.5*dH)
+        Mbar = M[idx]
+        Hbar = H[idx]
+        Fbar = Fk[idx]
+        F0 = np.sort(np.unique(Fbar))
+        if F0.size>Nbar:
+            F0=F0[-Nbar]
+        else:
+            F0=np.min(F0)
+        idx = Fbar>=F0
+        
+        p = np.polyfit(Hbar[idx],Mbar[idx],2)
+        Mi[i] = np.polyval(p,Hi[i])
+    
+    Hlower = Hi
+    Mlower = Mi
+    Mcorr=M-np.interp(H,Hlower,Mlower,left=np.nan,right=np.nan) #subtracted lower branch from FORCs via interpolation
+
+    Fk=Fk[~np.isnan(Mcorr)] #remove any nan
+    Fj=Fj[~np.isnan(Mcorr)] #remove any nan
+    H=H[~np.isnan(Mcorr)] #remove any nan
+    Hr=Hr[~np.isnan(Mcorr)] #remove any nan
+    M=M[~np.isnan(Mcorr)] #remove any nan
+    Mcorr = Mcorr[~np.isnan(Mcorr)] #remove any nan
+    
+    #repack
+    X["H"] = H    
+    X["Hr"] = Hr
+    X["M"] = M
+    X["Fk"] = Fk
+    X["Fj"] = Fj
+    X["DM"] = Mcorr
+    
+    return X
+
+
+def lowerbranch_subtract2(X):
     """Function to subtract lower hysteresis branch from FORC magnetizations
     
     Inputs:
@@ -635,16 +761,16 @@ def model_options(X):
     
     
     lambda_widge = widgets.FloatRangeSlider(
-        value=[0.0,0.4],
+        value=[0.0,0.08],
         min=0,
-        max=1.0,
-        step=0.2,
+        max=0.2,
+        step=0.04,
         description='Select $\lambda$ range:',
         disabled=False,
         continuous_update=False,
         orientation='horizontal',
         readout=True,
-        readout_format='.1f',
+        readout_format='.2f',
         style = style
     )
 
@@ -664,7 +790,7 @@ def model_options(X):
 
     down_title = widgets.HTML(value='<h3>Specify downsampling:</h3>')
     down_widge = widgets.IntSlider(
-        value=500,
+        value=np.minimum(X['M'].size,5000),
         min=100,
         max=X['M'].size,
         step=1,
@@ -720,7 +846,7 @@ def model_options(X):
     ### CONSTRUCT TAB MENU #############
     method_nest = widgets.Tab()
     method_nest.children = [SC,DS,mpl_widge]
-    method_nest.set_title(0, 'REGRESSION')
+    method_nest.set_title(0, 'MODEL ENSEMBLE')
     method_nest.set_title(1, 'DOWNSAMPLING')
     method_nest.set_title(2, 'PROCESSING')
     
@@ -829,6 +955,7 @@ def variforc_regression_evidence(sc0,sc1,lamb_sc,sb0,sb1,lamb_sb,Hc,Hb,dH,M,Hc0,
 
 def triangulate_rho(X):
 
+    se = X['se']
     rho = X['rho']
     Hc = X['Hc']
     Hb = X['Hb']
@@ -852,12 +979,16 @@ def triangulate_rho(X):
     interpolator = tri.LinearTriInterpolator(triang, rho)
     Xi, Yi = np.meshgrid(xi, yi)
     Zi = interpolator(Xi, Yi)
-    Xi[Xi==np.min(Xi[Xi>0])]=0
+
+    interpolator1 = tri.LinearTriInterpolator(triang, se)
+    SEi = interpolator(Xi, Yi)
 
     X['Hc1'] = Hc1
     X['Xi']=Xi
     X['Yi']=Yi
     X['Zi']=Zi
+    X['SEint']=interpolator1
+    X['Zint']=interpolator
     
     return X
 
@@ -1155,7 +1286,7 @@ def variforc_array_size(SC,SB,L): #array of variforc smoothing parameter
     Sc = np.unique(np.round(np.geomspace(Sc_min, Sc_max, num=num)))
     Sb = np.unique(np.round(np.geomspace(Sb_min, Sb_max, num=num)))
     #Lambda = np.unique(np.linspace(Lambda_min, Lambda_max, num=int(num*0.5)))
-    Lambda = np.arange(Lambda_min, Lambda_max+0.01,0.2)
+    Lambda = np.arange(Lambda_min, Lambda_max+0.001,0.04)
 
     if (Lambda_max > 0):
         [Sc0,Sc1,Sb0,Sb1,L]=np.meshgrid(Sc,Sc,Sb,Sb,Lambda)
@@ -1177,6 +1308,181 @@ def variforc_array_size(SC,SB,L): #array of variforc smoothing parameter
     results = widgets.HTML(value='<h5>Number of VARIFORC models to compare = {:}</h5>'.format(int(np.sum(idx))))
     display(results)
 
+def profile_options(X):
+    Hb1 = X['Hb1']-X['Hc2']
+    Hb2 = X['Hb2']
+    Hc1 = np.maximum(X['Hc1'],0)
+    Hc2 = X['Hc2']
+    style = {'description_width': 'initial'} #general style settings
+    
+    HL = widgets.HTML(value='<hr style="height:3px;border:none;color:#333;background-color:#333;" />')
+    
+    P_title = widgets.HTML(value='<h3>Select profile type:</h3>')
+    P_widge = widgets.RadioButtons(options=[('Horizontal profile',0), ('Vertical profile',1)],
+                                       value=0,
+                                       style=style)
+    
+    H_title = widgets.HTML(value='<h4>Horizontal profile specification:</h4>')
+    x_Hb_widge = widgets.FloatSlider(
+        value=0.0,
+        min=Hb1,
+        max=Hb2,
+        step=0.001,
+        description='$\mu_0H_u$ [T]',
+        disabled=False,
+        continuous_update=False,
+        orientation='horizontal',
+        readout=True,
+        readout_format='.3f',
+        layout={'width': '350px'},
+        style = style
+    )
+    
+    x_Hc_widge = widgets.FloatRangeSlider(
+        value=[Hc1,Hc2],
+        min=Hc1,
+        max=Hc2,
+        step=0.001,
+        description='$\mu_0H_c$ [T]',
+        disabled=False,
+        continuous_update=False,
+        orientation='horizontal',
+        readout=True,
+        readout_format='.3f',
+        layout={'width': '350px'},
+        style = style
+    )
+    
+    V_title = widgets.HTML(value='<h4>Vertical profile specification:</h4>')
+    y_Hc_widge = widgets.FloatSlider(
+        value=(Hc1+Hc2)/2.0,
+        min=Hc1,
+        max=Hc2,
+        step=0.001,
+        description='$\mu_0H_c$ [T]',
+        disabled=False,
+        continuous_update=False,
+        orientation='horizontal',
+        readout=True,
+        readout_format='.3f',
+        layout={'width': '350px'},
+        style = style
+    )
+    
+    y_Hb_widge = widgets.FloatRangeSlider(
+        value=[Hb1,Hb2],
+        min=Hb1,
+        max=Hb2,
+        step=0.001,
+        description='$\mu_0H_u$ [T]',
+        disabled=False,
+        continuous_update=False,
+        orientation='horizontal',
+        readout=True,
+        readout_format='.3f',
+        layout={'width': '350px'},
+        style = style
+    )
+    
+    profile_widge = VBox([P_title,P_widge,HL,H_title,x_Hb_widge,x_Hc_widge, \
+                         HL,V_title,y_Hc_widge,y_Hb_widge])
+    
+    profile_nest = widgets.Tab()
+    profile_nest.children = [profile_widge]
+    profile_nest.set_title(0, 'PLOT PROFILES')
+    display(profile_nest)   
+    
+    X['P_widge'] = P_widge
+    X['x_Hb_widge'] = x_Hb_widge
+    X['x_Hc_widge'] = x_Hc_widge
+    X['y_Hc_widge'] = y_Hc_widge
+    X['y_Hb_widge'] = y_Hb_widge
+
+    return X
+
+def profile_plot(X):
+
+    if X['P_widge'].value==0:
+        X = x_profile(X,X['x_Hc_widge'].value,X['x_Hb_widge'].value)
+    else:
+        X = y_profile(X,X['y_Hc_widge'].value,X['y_Hb_widge'].value)
+    
+    return X
+
+def x_profile(X,Hc,Hb):
+
+    Hc1, Hc2 = Hc[0], Hc[1]
+
+    dH = X['dH']
+    NH = int(np.sqrt((Hc2-Hc1)**2)/dH)
+    Hc0 = np.linspace(Hc1,Hc2,NH)
+    Hb0 = np.linspace(Hb,Hb,NH)
+    
+    rho_int = X['Zint'](Hc0,Hb0)
+    coef = sps.norm.ppf(0.025/np.sum(rho_int.mask==False))
+    CI_int = X['SEint'](Hc0,Hb0)*coef
+
+    fig = plt.figure(figsize=(5,5))
+    ax1 = fig.add_subplot(1,1,1)
+    
+    if X['mass'].value>0.0:
+        ax1.plot(Hc0,rho_int/(X['mass'].value/1000.0),color='k')
+        ax1.fill_between(Hc0, (rho_int-CI_int)/(X['mass'].value/1000.0), (rho_int+CI_int)/(X['mass'].value/1000.0),color='lightgrey')
+        ax1.set_ylabel('$Am^2$ $T^{-2} kg^{-1}$',fontsize=12)
+    else:
+        ax1.plot(Hc0,rho_int,color='k')
+        ax1.fill_between(Hc0, (rho_int-CI_int), (rho_int+CI_int),color='lightgrey')
+        ax1.set_ylabel('$Am^2$ $T^{-2}$',fontsize=12)
+
+    ax1.tick_params(axis='both',which='major',direction='out',length=5,width=1,color='k',labelsize='12')
+    ax1.tick_params(axis='both',which='minor',direction='out',length=3.5,width=1,color='k')
+#
+    ax1.set_xlabel('$\mu_0H_c$ [T]',fontsize=12)
+    ax1.minorticks_on()
+    
+    outputfile = X['sample'].value+'_Hc_PROFILE.eps'
+    plt.savefig(outputfile, dpi=300, bbox_inches="tight")
+    plt.show
+    
+    return X
+
+def y_profile(X,Hc,Hb):
+
+    Hb1, Hb2 = Hb[0], Hb[1]
+
+    dH = X['dH']
+    NH = int(np.sqrt((Hb2-Hb1)**2)/dH)
+    Hc0 = np.linspace(Hc,Hc,NH)
+    Hb0 = np.linspace(Hb1,Hb2,NH)
+    
+    rho_int = X['Zint'](Hc0,Hb0)
+    coef = sps.norm.ppf(0.025/np.sum(rho_int.mask==False))
+    CI_int = X['SEint'](Hc0,Hb0)*coef
+
+    fig = plt.figure(figsize=(5,5))
+    ax1 = fig.add_subplot(1,1,1)
+
+    if X['mass'].value>0.0:
+        ax1.plot(Hb0,rho_int/(X['mass'].value/1000.0),color='k')
+        ax1.fill_between(Hb0, (rho_int-CI_int)/(X['mass'].value/1000.0), (rho_int+CI_int)/(X['mass'].value/1000.0),color='lightgrey')
+        ax1.set_ylabel('$Am^2$ $T^{-2} kg^{-1}$',fontsize=12)
+    else:
+        ax1.plot(Hb0,rho_int,color='k')
+        ax1.fill_between(Hb0, (rho_int-CI_int), (rho_int+CI_int),color='lightgrey')
+        ax1.set_ylabel('$Am^2$ $T^{-2}$',fontsize=12)
+    
+    ax1.tick_params(axis='both',which='major',direction='out',length=5,width=1,color='k',labelsize='12')
+    ax1.tick_params(axis='both',which='minor',direction='out',length=3.5,width=1,color='k')
+#
+    ax1.set_xlabel('$\mu_0H_b$ [T]',fontsize=12)
+    ax1.minorticks_on()
+    
+    outputfile = X['sample'].value+'_Hu_PROFILE.eps'
+    plt.savefig(outputfile, dpi=300, bbox_inches="tight")
+    plt.show
+    
+    return X
+
 def variforc_array(X): #array of variforc smoothing parameter
 
     Sc_min = X['SC'].value[0]
@@ -1190,7 +1496,7 @@ def variforc_array(X): #array of variforc smoothing parameter
     Sc = np.unique(np.round(np.geomspace(Sc_min, Sc_max, num=num)))
     Sb = np.unique(np.round(np.geomspace(Sb_min, Sb_max, num=num)))
     #Lambda = np.linspace(Lambda_min, Lambda_max, num=int(num*0.5))
-    Lambda = np.arange(Lambda_min, Lambda_max+0.01,0.2)
+    Lambda = np.arange(Lambda_min, Lambda_max+0.001,0.04)
 
 
     if (Lambda_max > 0):
@@ -1279,7 +1585,7 @@ def FORC_regress0_full(X,y):
         ssr1 = np.sum((X[:,0:3] @ (iv @ XT[0:3,:] @ y) - y)**2) 
         r2_1 = 1 - ssr1 / np.sum((y-np.mean(y))**2)
         BF1, B = BayesFactor3_i(N,r2_1)
-    
+        
     # Test 2nd order model    
     status = True
     BF2 = 0.0
@@ -1310,7 +1616,7 @@ def FORC_regress0_full(X,y):
         r2_3 = 1 - ssr3 / np.sum((y-np.mean(y))**2)    
         BF3, _ = BayesFactor3_i(N,r2_3,3,B)
     
-    return np.array((1,BF1,BF2,BF3))
+    return np.array((0,BF1,BF2,BF3))
 
 def BayesFactor3_i(N,R2,order=1,B=0):
     
@@ -1363,7 +1669,7 @@ def dask_BF0(X,S,Didx,Mswitch):
     lamb=S[:,4]
 
     Npts = len(S)
-    L = np.zeros((Npts,4))    
+    L = np.zeros((Npts,5))    
     
     for i in range(Npts):
         BF = variforc_BF0_full(Xlsq,M,Hc,Hb,dH,Hc0,Hb0,sc0[i],sc1[i],lamb[i],sb0[i],sb1[i],lamb[i])
@@ -1372,6 +1678,10 @@ def dask_BF0(X,S,Didx,Mswitch):
         L[i,1] = np.sum(Li==1)
         L[i,2] = np.sum(Li==2) 
         L[i,3] = np.sum(Li==3)
+
+        BFn = BF - np.array([0,0,np.log(3.2),0])
+        Li = np.argmax(BFn,axis=1)
+        L[i,4] = np.sum(Li==2) 
 
     return L
 
@@ -1397,32 +1707,55 @@ def weighted_regression(X,L,Mswitch):
     
     Xlsq = X['Xlsq']
     
-    rho = np.zeros(Hc.size)   
+    rho = np.zeros(Hc.size) 
+    se = np.zeros(Hc.size)
+
     for i in range(Hc.size):
         
         w, idx = vari_weights(sc0,sc1,lamb,sb0,sb1,lamb,Hc,Hb,dH,Hc[i],Hb[i])
         
-        #perform 2nd-order least squares to estimate magnitude of beta
+        #perform 2nd-order least squares to estimate rho and variance-covariance matrix
         Aw = Xlsq[idx,0:6] * np.sqrt(w[:,np.newaxis])
         Bw = M[idx] * np.sqrt(w)
-        p=np.linalg.lstsq(Aw, Bw, rcond=0)[0]
-        rho2 = (p[3]-p[4])/4
-
+        p=np.linalg.lstsq(Aw, Bw, rcond=0)
+        if p[1].size==1:
+            rho2 = (p[0][3]-p[0][4])/4
+            sigma2 = p[1]/(Bw.size-6)
+            S2 = sigma2 * np.linalg.inv(np.dot(Aw.T, Aw))
+            A2=np.zeros(6)[:,np.newaxis]
+            A2[3]=0.25
+            A2[4]=-0.25
+            se2 = np.sqrt(A2.T @ S2 @ A2)
+ 
+        #perform 3rd-order least squares to estimate rho and variance-covariance matrix
         Aw = Xlsq[idx,:] * np.sqrt(w[:,np.newaxis])
-        p=np.linalg.lstsq(Aw, Bw, rcond=0)[0]
-        rho3 = p[3]/4 - p[4]/4 + (3*p[6]*Hc[i])/4 - (3*p[7]*Hb[i])/4 + (p[8]*Hb[i])/4 - (p[9]*Hc[i])/4
+        p=np.linalg.lstsq(Aw, Bw, rcond=0)
+        rho3 = p[0][3]/4 - p[0][4]/4 + (3*p[0][6]*Hc[i])/4 - (3*p[0][7]*Hb[i])/4 + (p[0][8]*Hb[i])/4 - (p[0][9]*Hc[i])/4
+        if p[1].size==1:
+            sigma2 = p[1]/(Bw.size-10)
+            S3 = sigma2 * np.linalg.inv(np.dot(Aw.T, Aw))
+            A3=np.zeros(10)[:,np.newaxis]
+            A3[3]=0.25
+            A3[4]=-0.25
+            A3[6]=3*Hc[i]/4
+            A3[7]=-3*Hb[i]/4
+            A3[8]=Hb[i]/4
+            A3[9]=-Hc[i]/4
+            se3 = np.sqrt(A3.T @ S3 @ A3)
 
         rho[i] = rho2*X['Pr'][i,2]+rho3*X['Pr'][i,3]
+        se[i] = se2*X['Pr'][i,2]+se3*X['Pr'][i,3]
 
     X['rho'] = rho
-    
+    X['se'] = se
+
     return X
 
 
 def calculate_model(X):
 
     if ('client' in X) == False: #start DASK if required
-        c = LocalCluster(n_workers=X['workers'].value)
+        c = LocalCluster(n_workers=X['workers'].value,ip="")
         X['client'] = Client(c)
 
     if X['Mtype'].value=='Magnetisations':
@@ -1490,9 +1823,10 @@ def calculate_model(X):
     else:
         BF = variforc_BF0_full(X['Xlsq'],X['DMnorm'],X['Hc'],X['Hb'],X['dH'],X['Hc'],X['Hb'],X['Sp'][i0,0],X['Sp'][i0,1],X['Sp'][i0,4],X['Sp'][i0,2],X['Sp'][i0,3],X['Sp'][i0,4])
     
-    BF[BF<0.0]=0.0
+    #BF[BF<0.0]=0.0
     X['BF']=BF  
-    X['Pr']=BF/np.sum(BF,axis=1)[:,np.newaxis]
+    #X['Pr']=BF/np.sum(BF,axis=1)[:,np.newaxis]
+    X['Pr']=np.exp(BF-logsumexp(BF,axis=1)[:,np.newaxis])
     Lpt = np.argmax(BF,axis=1)
     Lpt[np.max(X['BF'],axis=1)<1]=0
     
@@ -1513,7 +1847,7 @@ def plot_model_selection(X,Lpt,i0):
     sc1_out = widgets.Label(value='Optimal $Sc_1$ = {:}'.format(int(X['Sp'][i0,1])))
     sb0_out = widgets.Label(value='Optimal $Sb_0$ = {:}'.format(int(X['Sp'][i0,2])))
     sb1_out = widgets.Label(value='Optimal $Sb_1$ = {:}'.format(int(X['Sp'][i0,3])))
-    lam_out = widgets.Label(value='Optimal $\lambda$ = {:}'.format(int(X['Sp'][i0,4])))
+    lam_out = widgets.Label(value='Optimal $\lambda$ = {:.2f}'.format(X['Sp'][i0,4]))
     T_out = widgets.HTML(value='<h4>Distribution of model performance</h4>')
     
     display(VBox([R_out,HL,H_out,sc0_out,sc1_out,sb0_out,sb1_out,lam_out,HL,T_out]))
@@ -1557,7 +1891,7 @@ def plot_model_selection(X,Lpt,i0):
     a = np.array((1))
     b = np.array((0))
     c = np.array((0))
-    ax.text(0.5*(2*b+c)/(a+b+c)-0.175,np.sqrt(3)/2*c/(a+b+c)-0.06,'Undersmoothed',fontsize=12)
+    ax.text(0.5*(2*b+c)/(a+b+c)-0.175,np.sqrt(3)/2*c/(a+b+c)-0.06,'Overfitting',fontsize=12)
        
     a = np.array((0))
     b = np.array((1))
@@ -1567,7 +1901,7 @@ def plot_model_selection(X,Lpt,i0):
     a = np.array((0))
     b = np.array((0))
     c = np.array((1)) 
-    ax.text(0.5*(2*b+c)/(a+b+c)-0.175,np.sqrt(3)/2*c/(a+b+c)+0.03,'Oversmoothed',fontsize=12)
+    ax.text(0.5*(2*b+c)/(a+b+c)-0.15,np.sqrt(3)/2*c/(a+b+c)+0.03,'Underfitting',fontsize=12)
     
     ax.set_xlim((0,1))
     ax.set_ylim((0,np.sqrt(3)/2))
@@ -1580,13 +1914,13 @@ def plot_model_selection(X,Lpt,i0):
 
     fig, ax = plt.subplots()
     cseq=[]
-    cseq.append((68/255,119/255,170/255,1))
-    cseq.append((34/255,136/255,51/255,1))
-    cseq.append((204/255,187/255,68/255,1))
+    cseq.append((0/255,0/255,0/255,1))
+    cseq.append((86/255,180/255,233/255,1))
+    cseq.append((213/255,94/255,0/255,1))
     
-    ax.plot(X['Hc0'][Lpt<=1],X['Hb0'][Lpt<=1],'.',label='$Under$',markeredgecolor=cseq[0],markerfacecolor=cseq[0],markersize=3)
+    ax.plot(X['Hc0'][Lpt<=1],X['Hb0'][Lpt<=1],'.',label='$Overfit$',markeredgecolor=cseq[0],markerfacecolor=cseq[0],markersize=3)
     ax.plot(X['Hc0'][Lpt==2],X['Hb0'][Lpt==2],'.',label='$Optimal$',markeredgecolor=cseq[1],markerfacecolor=cseq[1],markersize=3)
-    ax.plot(X['Hc0'][Lpt==3],X['Hb0'][Lpt==3],'.',label='$Over$',markeredgecolor=cseq[2],markerfacecolor=cseq[2],markersize=3)
+    ax.plot(X['Hc0'][Lpt==3],X['Hb0'][Lpt==3],'.',label='$Underfit$',markeredgecolor=cseq[2],markerfacecolor=cseq[2],markersize=3)
     
     ax.set_aspect(1.0)    
     Hc1, Hc2, Hb1, Hb2 = measurement_limts(X)    
@@ -1601,12 +1935,10 @@ def plot_model_selection(X,Lpt,i0):
     ax.tick_params(axis='both',which='major',direction='out',length=5,width=1,color='k',labelsize='12')
     ax.tick_params(axis='both',which='minor',direction='out',length=3.5,width=1,color='k')   
     ax.legend(fontsize=10,labelspacing=0,handletextpad=-0.6,loc=4,bbox_to_anchor=(1.05,-0.02),frameon=False,markerscale=2.5);
-    ax.set_title('$\lambda$ = {:.2f}'.format(np.sum(Lpt==2)/np.size(Lpt)));
+    ax.set_title('$\psi$ = {:.2f}'.format(np.sum(Lpt==2)/np.size(Lpt)));
     outputfile = X['sample'].value+'_ORDER.eps'
-    plt.savefig(outputfile, dpi=300, bbox_inches="tight")
+    plt.savefig(outputfile, dpi=150, bbox_inches="tight")
     plt.show()
-
-    display(HL)
 
     return X
 
