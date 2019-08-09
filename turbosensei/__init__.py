@@ -1755,7 +1755,7 @@ def weighted_regression(X,L,Mswitch):
 def calculate_model(X):
 
     if ('client' in X) == False: #start DASK if required
-        c = LocalCluster(n_workers=X['workers'].value,ip="")
+        c = LocalCluster(n_workers=X['workers'].value,host="",ip="")
         X['client'] = Client(c)
 
     if X['Mtype'].value=='Magnetisations':
