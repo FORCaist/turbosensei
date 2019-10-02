@@ -16,6 +16,12 @@ import matplotlib.colors as colors
 from matplotlib.colors import LinearSegmentedColormap
 from dask.distributed import Client, LocalCluster, progress #needed for multiprocessing
 from scipy.special import gammaln, logsumexp
+import numba
+
+#define jit-based matrix inverse
+@numba.jit
+def inv_jit(A):
+  return np.linalg.inv(A)
 
 ##### BEGIN SECTION: FILE SELECTION #################################################
 class FileBrowser(object):
@@ -1436,7 +1442,7 @@ def x_profile(X,Hc,Hb):
 
     ax1.tick_params(axis='both',which='major',direction='out',length=5,width=1,color='k',labelsize='12')
     ax1.tick_params(axis='both',which='minor',direction='out',length=3.5,width=1,color='k')
-#
+
     ax1.set_xlabel('$\mu_0H_c$ [T]',fontsize=12)
     ax1.minorticks_on()
     
@@ -1473,7 +1479,7 @@ def y_profile(X,Hc,Hb):
     
     ax1.tick_params(axis='both',which='major',direction='out',length=5,width=1,color='k',labelsize='12')
     ax1.tick_params(axis='both',which='minor',direction='out',length=3.5,width=1,color='k')
-#
+
     ax1.set_xlabel('$\mu_0H_b$ [T]',fontsize=12)
     ax1.minorticks_on()
     
@@ -1538,24 +1544,25 @@ def FORC_regress0(X,y):
     N = y.size    
     XT = X.T
     XTX = XT @ X
-    
-    B1 = np.linalg.inv(XTX[0:3,0:3]) @ XT[0:3,:] @ y 
+    ydev = np.sum((y-np.mean(y))**2)
+
+    B1 = inv_jit(XTX[0:3,0:3]) @ XT[0:3,:] @ y 
     ssr1 = np.sum((X[:,0:3] @ B1 - y)**2)
-    r2_1 = 1 - ssr1 / np.sum((y-np.mean(y))**2)
+    r2_1 = 1 - ssr1 / ydev
     BF1, B = BayesFactor3_i(N,r2_1)
     
     if (BF1>1.0):
-        B2 = np.linalg.inv(XTX[0:6,0:6]) @ XT[0:6,:] @ y
+        B2 = inv_jit(XTX[0:6,0:6]) @ XT[0:6,:] @ y
         ssr2 = np.sum((X[:,0:6] @ B2 - y)**2)
-        r2_2 = 1 - ssr2 / np.sum((y-np.mean(y))**2)
+        r2_2 = 1 - ssr2 / ydev
         BF2, _ = BayesFactor3_i(N,r2_2,2,B)    
     else:
         return 0.0
     
     if (BF2>1.0*BF1):
-        B3 = np.linalg.inv(XTX) @ XT @ y
+        B3 = inv_jit(XTX) @ XT @ y
         ssr3 = np.sum((X @ B3 - y)**2)
-        r2_3 = 1 - ssr3 / np.sum((y-np.mean(y))**2)    
+        r2_3 = 1 - ssr3 / ydev    
         BF3, _ = BayesFactor3_i(N,r2_3,3,B)
     else:
         return 1.0
@@ -1570,12 +1577,13 @@ def FORC_regress0_full(X,y):
     N = y.size    
     XT = X.T
     XTX = XT @ X
+    ydev = np.sum((y-np.mean(y))**2)
 
     # Test 1st order model
     status = True
     BF1 = 0.0
     try:
-        iv = np.linalg.inv(XTX[0:3,0:3])
+        iv = inv_jit(XTX[0:3,0:3])
         #B1 = np.linalg.inv(XTX[0:3,0:3]) @ XT[0:3,:] @ y
         #ssr1 = np.sum((X[:,0:3] @ B1 - y)**2) 
     except np.linalg.LinAlgError as err:
@@ -1583,14 +1591,14 @@ def FORC_regress0_full(X,y):
     
     if status:
         ssr1 = np.sum((X[:,0:3] @ (iv @ XT[0:3,:] @ y) - y)**2) 
-        r2_1 = 1 - ssr1 / np.sum((y-np.mean(y))**2)
+        r2_1 = 1 - ssr1 / ydev
         BF1, B = BayesFactor3_i(N,r2_1)
         
     # Test 2nd order model    
     status = True
     BF2 = 0.0
     try:
-        iv = np.linalg.inv(XTX[0:6,0:6])
+        iv = inv_jit(XTX[0:6,0:6])
         #B2 = np.linalg.inv(XTX[0:6,0:6]) @ XT[0:6,:] @ y
         #ssr2 = np.sum((X[:,0:6] @ (np.linalg.inv(XTX[0:6,0:6]) @ XT[0:6,:] @ y) - y)**2)
     except np.linalg.LinAlgError as err:
@@ -1598,14 +1606,14 @@ def FORC_regress0_full(X,y):
     
     if status:
         ssr2 = np.sum((X[:,0:6] @ (iv @ XT[0:6,:] @ y) - y)**2)
-        r2_2 = 1 - ssr2 / np.sum((y-np.mean(y))**2)
+        r2_2 = 1 - ssr2 / ydev
         BF2, _ = BayesFactor3_i(N,r2_2,2,B)    
     
     # Test 3rd order model
     status = True
     BF3 = 0.0      
     try:
-        iv = np.linalg.inv(XTX)
+        iv = inv_jit(XTX)
         #B3 = np.linalg.inv(XTX) @ XT @ y
         #ssr3 = np.sum((X @ (np.linalg.inv(XTX) @ XT @ y) - y)**2)
     except np.linalg.LinAlgError as err:
@@ -1613,7 +1621,7 @@ def FORC_regress0_full(X,y):
     
     if status:
         ssr3 = np.sum((X @ (iv @ XT @ y) - y)**2)
-        r2_3 = 1 - ssr3 / np.sum((y-np.mean(y))**2)    
+        r2_3 = 1 - ssr3 / ydev   
         BF3, _ = BayesFactor3_i(N,r2_3,3,B)
     
     return np.array((0,BF1,BF2,BF3))
@@ -1721,7 +1729,7 @@ def weighted_regression(X,L,Mswitch):
         if p[1].size==1:
             rho2 = (p[0][3]-p[0][4])/4
             sigma2 = p[1]/(Bw.size-6)
-            S2 = sigma2 * np.linalg.inv(np.dot(Aw.T, Aw))
+            S2 = sigma2 * inv_jit(np.dot(Aw.T, Aw))
             A2=np.zeros(6)[:,np.newaxis]
             A2[3]=0.25
             A2[4]=-0.25
@@ -1733,7 +1741,7 @@ def weighted_regression(X,L,Mswitch):
         rho3 = p[0][3]/4 - p[0][4]/4 + (3*p[0][6]*Hc[i])/4 - (3*p[0][7]*Hb[i])/4 + (p[0][8]*Hb[i])/4 - (p[0][9]*Hc[i])/4
         if p[1].size==1:
             sigma2 = p[1]/(Bw.size-10)
-            S3 = sigma2 * np.linalg.inv(np.dot(Aw.T, Aw))
+            S3 = sigma2 * inv_jit(np.dot(Aw.T, Aw))
             A3=np.zeros(10)[:,np.newaxis]
             A3[3]=0.25
             A3[4]=-0.25
@@ -1755,7 +1763,7 @@ def weighted_regression(X,L,Mswitch):
 def calculate_model(X):
 
     if ('client' in X) == False: #start DASK if required
-        c = LocalCluster(n_workers=X['workers'].value,host="",ip="")
+        c = LocalCluster(n_workers=X['workers'].value)
         X['client'] = Client(c)
 
     if X['Mtype'].value=='Magnetisations':
@@ -1807,7 +1815,7 @@ def calculate_model(X):
     for i in range(len(X['Sp_i'])):
         job = X['client'].submit(dask_BF0,X['Ds'],X['Sp_i'][i],Didx,Mswitch)
         jobs.append(job)
-
+    
     results = X['client'].gather(jobs)
 
     L = results[0]
@@ -1831,9 +1839,7 @@ def calculate_model(X):
     Lpt[np.max(X['BF'],axis=1)<1]=0
     
     X = plot_model_selection(X,Lpt[idx],i0)
-
     X = weighted_regression(X,L,Mswitch) #calculate rho for optimal smooth
-    
     X = triangulate_rho(X) #triangulate rho for plotting
 
     return X
@@ -1942,7 +1948,7 @@ def plot_model_selection(X,Lpt,i0):
 
     return X
 
-def calculate_model2(X):
+""" def calculate_model2(X):
 
     if ('client' in X) == False: #start DASK if required
         c = LocalCluster(n_workers=X['workers'].value)
@@ -2031,23 +2037,18 @@ def calculate_model2(X):
         X = plot_model_results_full(X)
     
     
-    return X
+    return X """
 ##### END SECTION: MODEL FUNCTIONS  #################################################
 
 ##### BEGIN SECTION: FORC plotting  #################################################
 def FORC_plot(X):
 
     #unpack data
-    #rho = data['rho']
-    #H = data['H']
-    #Hc = data['Hc']
-    #Hb = data['Hb']
-
     Xi = X['Xi']
     
-    if type(Xi) is str:
-        print('Error: The current model is based on downsampled data. Run a full model using "calculate_model"') #return error
-        return X
+    #if type(Xi) is str:
+    #    print('Error: The current model is based on downsampled data. Run a full model using "calculate_model"') #return error
+    #    return X
     
     Yi = X['Yi']
     Zi = X['Zi']
