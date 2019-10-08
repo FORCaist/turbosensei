@@ -533,7 +533,6 @@ def OLS2BF(X,y):
     
     return np.array((0,BF1,BF2,BF3))
 
-@numba.jit
 def Bayes_factor(N,R2,order=1,B=0):
     
     a = -3/4
