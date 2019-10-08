@@ -2,6 +2,11 @@ README.md
 setup.cfg
 setup.py
 turbosensei/__init__.py
+turbosensei/load.py
+turbosensei/preprocess.py
+turbosensei/regress.py
+turbosensei/results.py
+turbosensei/utils.py
 turbosensei.egg-info/PKG-INFO
 turbosensei.egg-info/SOURCES.txt
 turbosensei.egg-info/dependency_links.txt
