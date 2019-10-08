@@ -6,7 +6,7 @@ import matplotlib.tri as tri
 from scipy.special import gammaln, logsumexp
 from dask.distributed import Client, LocalCluster, progress #needed for multiprocessing
 import codecs as cd
-import forcsensei.utils as ut
+import turbosensei.utils as ut
 import numba
 
 #### define jit-based matrix inverse ####

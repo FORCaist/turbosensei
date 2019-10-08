@@ -1,5 +1,5 @@
-import forcsensei.load
-import forcsensei.preprocess 
-import forcsensei.regress
-import forcsensei.results
-import forcsensei.utils
+import turbosensei.load
+import turbosensei.preprocess 
+import turbosensei.regress
+import turbosensei.results
+import turbosensei.utils

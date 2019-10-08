@@ -3,6 +3,7 @@ setup.cfg
 setup.py
 turbosensei/__init__.py
 turbosensei/load.py
+turbosensei/modB.py
 turbosensei/preprocess.py
 turbosensei/regress.py
 turbosensei/results.py

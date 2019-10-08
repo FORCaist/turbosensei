@@ -3,7 +3,7 @@ from ipywidgets import VBox, HBox
 import codecs as cd
 import numpy as np
 import matplotlib.pyplot as plt
-import forcsensei.utils as ut
+import turbosensei.utils as ut
 
 #### PREPROCESSING OPTIONS ####
 def options(X):
