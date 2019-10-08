@@ -1,5 +1,5 @@
 ipyfilechooser==0.2.0
-numba==0.30.1
+numba
 IPython==7.2.0
 matplotlib==2.2.2
 numpy==1.15.0
