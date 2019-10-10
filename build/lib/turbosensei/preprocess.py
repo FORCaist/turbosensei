@@ -7,7 +7,6 @@ import turbosensei.utils as ut
 
 #### PREPROCESSING OPTIONS ####
 def options(X):
-
     style = {'description_width': 'initial'} #general style settings
 
     ### Define sample properties ###
