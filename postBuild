@@ -1,5 +1,7 @@
 jupyter contrib nbextension install --user
 jupyter nbextension enable --py widgetsnbextension
+jupyter nbextension     enable --py --sys-prefix appmode
+jupyter serverextension enable --py --sys-prefix appmode
 pip install dask distributed --upgrade
 
 # Notebooks w/ extensions that auto-run code must be "trusted" to work the first time
