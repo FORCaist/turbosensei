@@ -96,7 +96,7 @@ def options(X):
     SC = VBox([M_title,M_widge,HL,S_title,Sc_widge,Sb_widge,lambda_widge,model_widge])
     
     ### Setup Multiprocessing tab ####################
-    X['ncore']=4
+    X['ncore']=8
     
     #header
     dask_title = widgets.HTML(value='<h3>DASK multiprocessing:</h3>')
