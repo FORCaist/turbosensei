@@ -1,5 +1,5 @@
-appmode
 ipyfilechooser
+appmode
 numba
 IPython==7.2.0
 matplotlib==2.2.2
