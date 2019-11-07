@@ -6,6 +6,7 @@ turbosensei/buttons.py
 turbosensei/load.py
 turbosensei/modB.py
 turbosensei/preprocess.py
+turbosensei/regress backup.py
 turbosensei/regress.py
 turbosensei/results.py
 turbosensei/utils.py

@@ -122,8 +122,13 @@ def forcplot(Xi,Yi,Zi,fn,mass,colorbar,level,contour,contourpts,xmin,xmax,ymin,y
     #define colormaps
     idx=(Xi_new>=xmin) & (Xi_new<=xmax) & (Yi_new>=ymin) & (Yi_new<=ymax) #find points currently in view
     cmap,vmin,vmax = FORCinel_colormap(Zi_new[idx])
+    #cmap, norm = FORCinel_colormap(Zi_new[idx])
 
-    CS = ax.contourf(Xi_new, Yi_new, Zi_new, level, cmap = cmap, vmin=vmin, vmax=vmax)       
+    Zi_trunc = np.copy(Zi_new)
+    Zi_trunc[np.isnan(Zi_trunc)] = 0.0
+    Zi_trunc[Zi_trunc<vmin]=vmin
+    CS = ax.contourf(Xi_new, Yi_new, Zi_trunc, level, cmap = cmap, vmin=vmin, vmax=vmax)
+    #CS = ax.contourf(Xi_new, Yi_new, Zi_new, level, cmap = cmap, norm=norm)       
     if (contour>0) & (contour<level):
         CS2 = ax.contour(CS, levels=CS.levels[::contour], colors='k',linewidths=contourpts)
 
@@ -163,7 +168,7 @@ def FORCinel_colormap(Z):
     #setup initial colormap assuming that negative range does not require extension
     cdict = {'red':     ((0.0,  127/255, 127/255),
                          (0.1387,  255/255, 255/255),
-                         #(0.1597,  255/255, 255/255),
+                         (0.1597,  255/255, 255/255),
                          (0.1807,  255/255, 255/255),
                          (0.3193,  102/255, 102/255),
                        (0.563,  204/255, 204/255),
@@ -174,7 +179,7 @@ def FORCinel_colormap(Z):
 
             'green':   ((0.0,  127/255, 127/255),
                          (0.1387,  255/255, 255/255),
-                         #(0.1597,  255/255, 255/255),
+                         (0.1597,  255/255, 255/255),
                          (0.1807,  255/255, 255/255),
                        (0.3193,  178/255, 178/255),
                         (0.563,  204/255, 204/255),
@@ -185,7 +190,7 @@ def FORCinel_colormap(Z):
 
              'blue':   ((0.0,  255/255, 255/255),
                          (0.1387,  255/255, 255/255),
-                         #(0.1597,  255/255, 255/255),
+                         (0.1597,  255/255, 255/255),
                          (0.1807,  255/255, 255/255),
                        (0.3193,  102/255, 102/255),
                         (0.563,  76/255, 76/255),
@@ -202,15 +207,16 @@ def FORCinel_colormap(Z):
         vmin=np.min(Z)
         vmax=np.max(Z)        
     
-    anchors = np.zeros(9)
-    anchors[1]=(-0.015*vmax-vmin)/(vmax-vmin)
-    anchors[2]=(0.015*vmax-vmin)/(vmax-vmin)
-    anchors[3]=(0.19*vmax-vmin)/(vmax-vmin)
-    anchors[4]=(0.48*vmax-vmin)/(vmax-vmin)
-    anchors[5]=(0.64*vmax-vmin)/(vmax-vmin)
-    anchors[6]=(0.80*vmax-vmin)/(vmax-vmin)
-    anchors[7]=(0.97*vmax-vmin)/(vmax-vmin)
-    anchors[8]=1.0
+    anchors = np.zeros(10)
+    anchors[1]=(-0.025*vmax-vmin)/(vmax-vmin)
+    anchors[2]=(-0.005*vmax-vmin)/(vmax-vmin)
+    anchors[3]=(0.025*vmax-vmin)/(vmax-vmin)
+    anchors[4]=(0.19*vmax-vmin)/(vmax-vmin)
+    anchors[5]=(0.48*vmax-vmin)/(vmax-vmin)
+    anchors[6]=(0.64*vmax-vmin)/(vmax-vmin)
+    anchors[7]=(0.80*vmax-vmin)/(vmax-vmin)
+    anchors[8]=(0.97*vmax-vmin)/(vmax-vmin)
+    anchors[9]=1.0
 
     Rlst = list(cdict['red'])
     Glst = list(cdict['green'])

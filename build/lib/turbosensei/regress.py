@@ -36,7 +36,7 @@ def options(X):
     Sc_widge = widgets.IntRangeSlider(
         value=[2,8],
         min=2,
-        max=20,
+        max=10,
         step=1,
         description='Select $s_c$ range:',
         continuous_update=False,
@@ -49,7 +49,7 @@ def options(X):
     Sb_widge = widgets.IntRangeSlider(
         value=[2,8],
         min=2,
-        max=20,
+        max=10,
         step=1,
         description='Select $s_u$ range:',
         continuous_update=False,
@@ -75,7 +75,7 @@ def options(X):
 
     down_title = widgets.HTML(value='<h3>Specify downsampling:</h3>')
     down_widge = widgets.IntSlider(
-        value=np.minimum(X['M'].size,5000),
+        value=np.minimum(X['M'].size,2000),
         min=100,
         max=X['M'].size,
         step=1,
@@ -96,7 +96,7 @@ def options(X):
     SC = VBox([M_title,M_widge,HL,S_title,Sc_widge,Sb_widge,lambda_widge,model_widge])
     
     ### Setup Multiprocessing tab ####################
-    X['ncore']=4
+    X['ncore']=8
     
     #header
     dask_title = widgets.HTML(value='<h3>DASK multiprocessing:</h3>')
@@ -160,7 +160,8 @@ def compare(X):
     X['Hb'] = 0.5*(X['H']+X['Hr'])
     X['Mnorm'] = M/np.max(M)
     X['DMnorm'] = DM/np.max(DM)
-    X['Xlsq'] = np.column_stack((np.ones((X['Hc'].size,1)),X['Hc'],X['Hb'],X['Hc']**2,X['Hb']**2,X['Hc']*X['Hb'],X['Hc']**3,X['Hb']**3,X['Hc']**2*X['Hb'],X['Hc']*X['Hb']**2))
+    #X['Xlsq'] = np.column_stack((np.ones((X['Hc'].size,1)),X['Hc'],X['Hb'],X['Hc']**2,X['Hb']**2,X['Hc']*X['Hb'],X['Hc']**3,X['Hb']**3,X['Hc']**2*X['Hb'],X['Hc']*X['Hb']**2))
+    X['Xlsq'] = np.column_stack((np.ones((X['Hc'].size,1)),X['H'],X['Hr'],X['H']**2,X['Hr']**2,X['H']*X['Hr'],X['H']**3,X['Hr']**3,X['H']**2*X['Hr'],X['H']*X['Hr']**2))
 
     idx = np.argwhere(in_window(X,X['Hc'],X['Hb'])==True)
     X['Hc0'] = X['Hc'][idx]
@@ -207,10 +208,11 @@ def compare(X):
     BF[np.isinf(BF)]=1E200
     X['BF']=BF  
     X['Pr']=np.exp(BF-logsumexp(BF,axis=1)[:,np.newaxis])
-    Lpt = np.argmax(BF,axis=1)
+    #Lpt provides labels to points for selected model order
+    Lpt = np.argmax(BF-[np.log(3),0,np.log(3),np.log(3)],axis=1)
     Lpt[np.max(X['BF'],axis=1)<1]=0
     
-    X = plot_model_selection(X,Lpt[idx],i0)
+    X = plot_model_selection(X,Lpt[idx])
 
     return X
 
@@ -224,8 +226,6 @@ def process_split(X,S,Didx,Mswitch):
 
     Hc = X['Hc']
     Hb = X['Hb']
-    #Hc = Xlsq[:,1]
-    #Hb = Xlsq[:,2]
     
     dH = X['dH']
     Hc0 = X['Hc0']
@@ -240,18 +240,25 @@ def process_split(X,S,Didx,Mswitch):
     lamb=S[:,4]
 
     Npts = len(S)
-    L = np.zeros((Npts,5))    
+    L = np.zeros((Npts,4))    
     
     for i in range(Npts):
         BF = regress_split(Xlsq,M,Hc,Hb,dH,Hc0,Hb0,sc0[i],sc1[i],lamb[i],sb0[i],sb1[i],lamb[i])
         Li = np.argmax(BF,axis=1) 
-        L[i,0] = np.sum(Li==0)
-        L[i,1] = np.sum(Li==1)
-        L[i,2] = np.sum(Li==2) 
-        L[i,3] = np.sum(Li==3)
+        #L[i,0] = np.sum(BF==0)
+        #L[i,1] = np.sum(Li==1)
+        #L[i,2] = np.sum(Li==2) 
+        #L[i,3] = np.sum(Li==3)
+        L[i,0] = np.sum((Li==0) & (BF[:,0]-np.log(3)>BF[:,2]))
+        L[i,1] = np.sum((Li==1) & (BF[:,1]-np.log(3)>BF[:,2]))
+        L[i,3] = np.sum((Li==3) & (BF[:,3]-np.log(3)>BF[:,2]))
+        L[i,2] = len(BF) - L[i,0] - L[i,1] - L[i,3]
+        #L[i,1] = np.sum(Li==1)
+        #L[i,2] = np.sum(Li==2) 
+        #L[i,3] = np.sum(Li==3)
 
-        Li = np.argmax(BF,axis=1)
-        L[i,4] = np.sum(Li==2) 
+        #Li = np.argmax(BF,axis=1)
+        #L[i,4] = np.sum(Li==2) 
 
     return L
 
@@ -269,6 +276,9 @@ def regress_split(Xlsq,M,Hc,Hb,dH,Hc0,Hb0,sc0,sc1,lamb_sc,sb0,sb1,lamb_sb):
 def execute(X):
     
     L = X['L']
+    #Pidx = np.argmax(X['BF']-[np.log(3),np.log(3),0,np.log(3)],axis=1)
+    #Pidx = np.argmax(X['BF']-[0.0, 0.0, np.log(3), np.log(3)],axis=1)
+    Pidx = np.argmax(X['BF'],axis=1)
     Mswitch = X['Mswitch']
 
     i0 = np.argmax(L[:,2])
@@ -295,22 +305,28 @@ def execute(X):
     se = np.zeros(Hc.size)
 
     for i in range(Hc.size):
+        if Pidx[i]>1:
+            w, idx = vari_weights(sc0,sc1,lamb,sb0,sb1,lamb,Hc,Hb,dH,Hc[i],Hb[i])
         
-        w, idx = vari_weights(sc0,sc1,lamb,sb0,sb1,lamb,Hc,Hb,dH,Hc[i],Hb[i])
+            #perform 2nd-order least squares to estimate rho and variance-covariance matrix
+            Aw = Xlsq[idx,0:6] * np.sqrt(w[:,np.newaxis])
+            Bw = M[idx] * np.sqrt(w)
+            p=np.linalg.lstsq(Aw, Bw, rcond=0)
+            if p[1].size==1:
+                #rho2 = (p[0][3]-p[0][4])/4
+                rho2 = -0.5*p[0][5]
+                sigma2 = p[1]/(Bw.size-6)
+                S2 = sigma2 * inv_jit(np.dot(Aw.T, Aw))
+                A2=np.zeros(6)[:,np.newaxis]
+                #A2[3]=0.25
+                #A2[4]=-0.25
+                A2[5] = -0.5
+                se2 = np.sqrt(A2.T @ S2 @ A2)
+            
+            rho[i] = rho2
+            se[i] = se2
         
-        #perform 2nd-order least squares to estimate rho and variance-covariance matrix
-        Aw = Xlsq[idx,0:6] * np.sqrt(w[:,np.newaxis])
-        Bw = M[idx] * np.sqrt(w)
-        p=np.linalg.lstsq(Aw, Bw, rcond=0)
-        if p[1].size==1:
-            rho2 = (p[0][3]-p[0][4])/4
-            sigma2 = p[1]/(Bw.size-6)
-            S2 = sigma2 * inv_jit(np.dot(Aw.T, Aw))
-            A2=np.zeros(6)[:,np.newaxis]
-            A2[3]=0.25
-            A2[4]=-0.25
-            se2 = np.sqrt(A2.T @ S2 @ A2)
- 
+        '''
         #perform 3rd-order least squares to estimate rho and variance-covariance matrix
         Aw = Xlsq[idx,:] * np.sqrt(w[:,np.newaxis])
         p=np.linalg.lstsq(Aw, Bw, rcond=0)
@@ -326,9 +342,10 @@ def execute(X):
             A3[8]=Hb[i]/4
             A3[9]=-Hc[i]/4
             se3 = np.sqrt(A3.T @ S3 @ A3)
-
+        
         rho[i] = rho2*X['Pr'][i,2]+rho3*X['Pr'][i,3]
         se[i] = se2*X['Pr'][i,2]+se3*X['Pr'][i,3]
+        '''
 
     X['rho'] = rho
     X['se'] = se
@@ -377,8 +394,11 @@ def triangulate_rho(X):
     return X
 
 #### PLOTTING FUNCTIONS ####
-def plot_model_selection(X,Lpt,i0):
+def plot_model_selection(X,Lpt):
     
+    L = X['L']
+    i0 = np.argmax(L[:,2])
+
     R_out = widgets.HTML(value='<h3>Model Comparison Results</h3>')
     HL = widgets.HTML(value='<hr style="height:3px;border:none;color:#333;background-color:#333;" />')
     H_out = widgets.HTML(value='<h4>Optimal VARIFORC Smoothing Factors</h4>')
@@ -391,8 +411,6 @@ def plot_model_selection(X,Lpt,i0):
     
     display(VBox([R_out,HL,H_out,sc0_out,sc1_out,sb0_out,sb1_out,lam_out,HL,T_out]))
 
-    L = X['L']
-    i0 = np.argmax(L[:,2])
     a = L[:,0]+L[:,1]
     b = L[:,2]
     c = L[:,3]
@@ -492,16 +510,16 @@ def OLS2BF(X,y):
     XTX = XT @ X
     ydev = np.sum((y-np.mean(y))**2)
 
-    # Test 1st order model
+    # Test 2nd order model woth zero derivative
     status = True
     BF1 = 0.0
     try:
-        iv = inv_jit(XTX[0:3,0:3])
+        iv = inv_jit(XTX[0:5,0:5])
     except np.linalg.LinAlgError as err:
         status = False
     
     if status:
-        ssr1 = np.sum((X[:,0:3] @ (iv @ XT[0:3,:] @ y) - y)**2) 
+        ssr1 = np.sum((X[:,0:5] @ (iv @ XT[0:5,:] @ y) - y)**2) 
         r2_1 = 1 - ssr1 / ydev
         BF1, B = Bayes_factor(N,r2_1)
         
@@ -539,7 +557,7 @@ def Bayes_factor(N,R2,order=1,B=0):
     if (order==1):
         A = -1.3862943611198906
         B = gammaln((N-1)/2)
-        BF = A+gammaln((N-2-1)/2)-B+(-(N-2-1)/2+a+1)*np.log(1-R2)
+        BF = A+gammaln((N-4-1)/2)-B+(-(N-4-1)/2+a+1)*np.log(1-R2)
     elif (order==2):
         A = -0.8128078577831402
         BF = A+gammaln((N-5-1)/2)-B+(-(N-5-1)/2+a+1)*np.log(1-R2)
@@ -559,7 +577,7 @@ def variforc_array_size(SC,SB,L): #array of variforc smoothing parameter
     Sb_max = SB[1]
     Lambda_min = L[0]
     Lambda_max = L[1]
-    num = 8
+    num = 6
 
     Sc = np.unique(np.round(np.geomspace(Sc_min, Sc_max, num=num)))
     Sb = np.unique(np.round(np.geomspace(Sb_min, Sb_max, num=num)))
@@ -584,6 +602,7 @@ def variforc_array_size(SC,SB,L): #array of variforc smoothing parameter
 
     results = widgets.HTML(value='<h5>Number of VARIFORC models to compare = {:}</h5>'.format(int(np.sum(idx))))
     display(results)
+
 def variforc_array(X): #array of variforc smoothing parameter
 
     Sc_min = X['SC'].value[0]
@@ -592,7 +611,7 @@ def variforc_array(X): #array of variforc smoothing parameter
     Sb_max = X['SB'].value[1]
     Lambda_min = X['lambda'].value[0]
     Lambda_max = X['lambda'].value[1]
-    num = 8
+    num = 6
 
     Sc = np.unique(np.round(np.geomspace(Sc_min, Sc_max, num=num)))
     Sb = np.unique(np.round(np.geomspace(Sb_min, Sb_max, num=num)))
