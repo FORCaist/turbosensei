@@ -10,6 +10,7 @@ import turbosensei.results as res
 def ini0(X):
     X['fn'] = X['fc'].selected
     del X['fc']
+    display(widgets.HTML(value="FORCsensei Initialization complete"))
     return X
 
 def ini(ex):
