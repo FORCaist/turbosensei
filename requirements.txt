@@ -9,3 +9,6 @@ scipy==1.1.0
 bokeh==1.0.4
 git+https://github.com/FORCaist/turbosensei.git
 jupyter_contrib_nbextensions
+
+#If you are installing packages locally also install the following:
+#dask distributed
